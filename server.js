@@ -89,9 +89,38 @@ function cleanRoundId(value) {
   return value.trim();
 }
 
+function cleanRoundResult(value, duration) {
+  const requiredKeys = ["id", "outcome", "elapsedMs"];
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).length !== requiredKeys.length
+    || !requiredKeys.every((key) => Object.hasOwn(value, key))) {
+    throw new RequestError(400, "A round result needs only id, outcome and elapsedMs.");
+  }
+  const id = cleanRoundId(value.id);
+  if (value.outcome !== "won" && value.outcome !== "lost") {
+    throw new RequestError(400, "A round outcome must be won or lost.");
+  }
+  if (!Number.isSafeInteger(value.elapsedMs)) {
+    throw new RequestError(400, "The elapsed time must be a whole number of milliseconds.");
+  }
+  if (value.outcome === "won" && (value.elapsedMs < 1 || value.elapsedMs >= duration)) {
+    throw new RequestError(400, "A winning time must be positive and shorter than the round duration.");
+  }
+  if (value.outcome === "lost" && value.elapsedMs !== duration) {
+    throw new RequestError(400, "A lost round must use the full round duration.");
+  }
+  return { id, outcome: value.outcome, elapsedMs: value.elapsedMs };
+}
+
 function publicPlayer(player) {
   // Round IDs are saved internally to recognise recent retries.
-  return { id: player.id, name: player.name, roundsWon: player.roundsWon };
+  return {
+    id: player.id,
+    name: player.name,
+    roundsWon: player.roundsWon,
+    roundsLost: player.roundsLost,
+    bestTimeMs: player.bestTimeMs,
+  };
 }
 
 function checkUniqueName(players, name, currentId) {
@@ -99,6 +128,19 @@ function checkUniqueName(players, name, currentId) {
     player.id !== currentId && player.name.toLowerCase() === name.toLowerCase()
   );
   if (duplicate) throw new RequestError(409, "That player name is already in use.");
+}
+
+function migrateSavedPlayers(players) {
+  if (!Array.isArray(players)) return players;
+  return players.map((player) => {
+    if (!player || typeof player !== "object" || Array.isArray(player)) return player;
+    // Older games saved wins only. Add missing fields without resetting progress.
+    return {
+      ...player,
+      roundsLost: Object.hasOwn(player, "roundsLost") ? player.roundsLost : 0,
+      bestTimeMs: Object.hasOwn(player, "bestTimeMs") ? player.bestTimeMs : null,
+    };
+  });
 }
 
 function validSavedPlayers(players) {
@@ -112,8 +154,13 @@ function validSavedPlayers(players) {
     if (typeof player.name !== "string" || !player.name || player.name.length > 24) return false;
     if (player.name !== player.name.trim() || seenNames.has(player.name.toLowerCase())) return false;
     if (!Number.isSafeInteger(player.roundsWon) || player.roundsWon < 0) return false;
+    if (!Number.isSafeInteger(player.roundsLost) || player.roundsLost < 0) return false;
+    const roundsPlayed = player.roundsWon + player.roundsLost;
+    if (!Number.isSafeInteger(roundsPlayed)) return false;
+    if (player.bestTimeMs !== null && (!Number.isSafeInteger(player.bestTimeMs)
+      || player.bestTimeMs < 1 || player.roundsWon < 1)) return false;
     if (!Array.isArray(player.completedRoundIds) || player.completedRoundIds.length > rememberedRoundLimit) return false;
-    if (player.roundsWon < player.completedRoundIds.length) return false;
+    if (roundsPlayed < player.completedRoundIds.length) return false;
     if (new Set(player.completedRoundIds).size !== player.completedRoundIds.length) return false;
     if (!player.completedRoundIds.every((id) =>
       typeof id === "string" && id.length > 0 && id.length <= 100 && id === id.trim()
@@ -132,6 +179,20 @@ export function createApp({
   // Queue changes so two simultaneous saves cannot overwrite each other.
   let mutationQueue = Promise.resolve();
 
+  async function loadRoundDuration() {
+    try {
+      // Read the same configuration that the browser receives.
+      const rules = JSON.parse(await readFile(join(publicDir, "game-rules.json"), "utf8"));
+      const duration = rules?.roundDurationMs;
+      if (!Number.isSafeInteger(duration) || duration < 1000 || duration > 60000) {
+        throw new Error("Invalid round duration");
+      }
+      return duration;
+    } catch {
+      throw new RequestError(500, "Game rules could not be read or are invalid. Please check game-rules.json.");
+    }
+  }
+
   async function loadPlayers() {
     let text;
     try {
@@ -142,7 +203,7 @@ export function createApp({
     }
 
     try {
-      const players = JSON.parse(text);
+      const players = migrateSavedPlayers(JSON.parse(text));
       if (!validSavedPlayers(players)) throw new Error("Invalid saved player data");
       return players;
     } catch {
@@ -202,7 +263,10 @@ export function createApp({
           const name = cleanName(body.name);
           const player = await changePlayers((players) => {
             checkUniqueName(players, name);
-            const added = { id: randomUUID(), name, roundsWon: 0, completedRoundIds: [] };
+            const added = {
+              id: randomUUID(), name, roundsWon: 0, roundsLost: 0,
+              bestTimeMs: null, completedRoundIds: [],
+            };
             players.push(added);
             return publicPlayer(added);
           });
@@ -224,9 +288,17 @@ export function createApp({
 
         if (request.method === "PATCH") {
           const body = await readJson(request);
-          const property = onlyProperty(body, ["name", "completedRoundId"],
-            "Send either a player name or a completed round ID.");
-          const value = property === "name" ? cleanName(body.name) : cleanRoundId(body.completedRoundId);
+          const property = onlyProperty(body, ["name", "roundResult", "completedRoundId"],
+            "Send only a player name, a round result, or a legacy completed round ID.");
+          let value;
+          if (property === "name") {
+            value = cleanName(body.name);
+          } else if (property === "roundResult") {
+            value = cleanRoundResult(body.roundResult, await loadRoundDuration());
+          } else {
+            // An already-open older browser can finish its untimed round.
+            value = { id: cleanRoundId(body.completedRoundId), outcome: "won", elapsedMs: null };
+          }
           const player = await changePlayers((players) => {
             const existing = players.find((item) => item.id === id);
             if (!existing) throw new RequestError(404, "That player could not be found.");
@@ -234,12 +306,20 @@ export function createApp({
             if (property === "name") {
               checkUniqueName(players, value, id);
               existing.name = value;
-            } else if (!existing.completedRoundIds.includes(value)) {
-              if (!Number.isSafeInteger(existing.roundsWon + 1)) {
+            } else if (!existing.completedRoundIds.includes(value.id)) {
+              if (!Number.isSafeInteger(existing.roundsWon + existing.roundsLost + 1)) {
                 throw new RequestError(409, "This player has reached the score limit.");
               }
-              existing.roundsWon += 1;
-              existing.completedRoundIds.push(value);
+              if (value.outcome === "won") {
+                existing.roundsWon += 1;
+                if (value.elapsedMs !== null && (existing.bestTimeMs === null || value.elapsedMs < existing.bestTimeMs)) {
+                  existing.bestTimeMs = value.elapsedMs;
+                }
+              } else {
+                existing.roundsLost += 1;
+              }
+              // Both outcomes share the same retry history. A retry cannot replace a result.
+              existing.completedRoundIds.push(value.id);
               existing.completedRoundIds = existing.completedRoundIds.slice(-rememberedRoundLimit);
             }
             return publicPlayer(existing);

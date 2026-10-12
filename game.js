@@ -9,21 +9,28 @@ export function validateRules(rules) {
     rules.pizzasPerRound > 12 ||
     !Number.isInteger(rules.pointsPerPizza) ||
     rules.pointsPerPizza < 1 ||
-    rules.pointsPerPizza > 100
+    rules.pointsPerPizza > 100 ||
+    !Number.isSafeInteger(rules.roundDurationMs) ||
+    rules.roundDurationMs < 1000 ||
+    rules.roundDurationMs > 60000
   ) {
     throw new Error('The game settings could not be loaded.');
   }
 
   return {
     pizzasPerRound: rules.pizzasPerRound,
-    pointsPerPizza: rules.pointsPerPizza
+    pointsPerPizza: rules.pointsPerPizza,
+    roundDurationMs: rules.roundDurationMs
   };
 }
 
-export function createRound(playerId, rules, roundId) {
+export function createRound(playerId, rules, roundId, startedAt) {
   const settings = validateRules(rules);
   if (!playerId || !roundId) {
     throw new Error('Choose a player before starting a round.');
+  }
+  if (!Number.isFinite(startedAt) || startedAt < 0) {
+    throw new Error('A round needs a valid start time.');
   }
 
   // An array contains the IDs of pizzas still available to collect.
@@ -35,20 +42,54 @@ export function createRound(playerId, rules, roundId) {
       (_, index) => index + 1
     ),
     pizzasPerRound: settings.pizzasPerRound,
-    pointsPerPizza: settings.pointsPerPizza
+    pointsPerPizza: settings.pointsPerPizza,
+    roundDurationMs: settings.roundDurationMs,
+    startedAt: startedAt,
+    status: 'playing',
+    elapsedMs: null
   };
 }
 
-export function collectPizza(round, pizzaId) {
+function elapsedSinceStart(round, nowMs) {
+  if (!Number.isFinite(nowMs) || nowMs < 0) {
+    throw new Error('The timer needs a valid clock reading.');
+  }
+  return Math.max(0, nowMs - round.startedAt);
+}
+
+export function updateRoundTime(round, nowMs) {
+  if (!round || round.status !== 'playing') return round;
+
+  // Check the clock, rather than counting how many timer callbacks ran.
+  // A delayed callback or a late click must not give the player extra time.
+  if (elapsedSinceStart(round, nowMs) < round.roundDurationMs) return round;
+
+  return { ...round, status: 'lost', elapsedMs: round.roundDurationMs };
+}
+
+export function collectPizza(round, pizzaId, nowMs) {
+  const currentRound = updateRoundTime(round, nowMs);
   // A repeated click on the same pizza must not award extra points.
-  if (!round || !round.remainingPizzaIds.includes(pizzaId)) {
-    return round;
+  if (!currentRound || currentRound.status !== 'playing' ||
+      !currentRound.remainingPizzaIds.includes(pizzaId)) {
+    return currentRound;
   }
 
+  const remainingPizzaIds = currentRound.remainingPizzaIds.filter((id) => id !== pizzaId);
+  const won = remainingPizzaIds.length === 0;
   return {
-    ...round,
-    remainingPizzaIds: round.remainingPizzaIds.filter((id) => id !== pizzaId)
+    ...currentRound,
+    remainingPizzaIds: remainingPizzaIds,
+    status: won ? 'won' : 'playing',
+    // Round down so a finish just before the deadline still stays below it.
+    elapsedMs: won ? Math.max(1, Math.floor(elapsedSinceStart(currentRound, nowMs))) : null
   };
+}
+
+export function getRemainingTimeMs(round, nowMs) {
+  if (!round || round.status === 'lost') return 0;
+  const elapsed = round.status === 'won' ? round.elapsedMs : elapsedSinceStart(round, nowMs);
+  return Math.max(0, round.roundDurationMs - elapsed);
 }
 
 export function getRoundScore(round) {
@@ -58,5 +99,22 @@ export function getRoundScore(round) {
 }
 
 export function isRoundComplete(round) {
-  return Boolean(round && round.remainingPizzaIds.length === 0);
+  return Boolean(round && round.status === 'won');
+}
+
+export function isRoundOver(round) {
+  return Boolean(round && (round.status === 'won' || round.status === 'lost'));
+}
+
+// Timed winners lead the board. Older untimed wins are still kept.
+// Return a new array so rendering cannot reorder the original player data.
+export function sortPlayersByBestTime(playerList) {
+  return [...playerList].sort((first, second) => {
+    const firstTime = first.bestTimeMs ?? Infinity;
+    const secondTime = second.bestTimeMs ?? Infinity;
+    return firstTime - secondTime ||
+      second.roundsWon - first.roundsWon ||
+      (first.roundsLost ?? 0) - (second.roundsLost ?? 0) ||
+      first.name.localeCompare(second.name);
+  });
 }

@@ -18,17 +18,36 @@
 
 This educational app has no sign-in system, so keep its forwarded port private. Press **Ctrl+C** in the terminal when you want to stop the server.
 
+## Update the Codespace you already use
+
+1. Stop the running server with **Ctrl+C**.
+2. Run `git status` and confirm you are on **`pizza-collector`** with a clean working tree. If it reports local changes, preserve your work and review those changes before pulling.
+3. With a clean working tree, run:
+
+   ```bash
+   git pull --ff-only origin pizza-collector
+   npm start
+   ```
+
+4. Refresh the game's browser tab. If the pull cannot fast-forward, resolve the branch difference before proceeding with the update.
+
+Your existing `.data/players.json` is excluded from Git and remains in the same Codespace. The update preserves saved players and earlier wins.
+
 ## About the game
 
-A small CRUD game made with **HTML, CSS, and plain JavaScript**, plus a **Node.js server** that saves player records. It is designed for people taking turns on one device who want to keep separate game progress.
+A small CRUD game made with **HTML, CSS, and plain JavaScript**, plus a **Node.js server** that saves player records. It supports friendly competition between people taking turns and using the same server's player list.
 
-Create a player, choose that player, and collect three pizzas. Each pizza is worth **10 points**. Collecting all three earns **30 points and one round won** for the selected player.
+Create a player, choose that player, and collect **three pizzas before five seconds are up**. Each pizza is worth **10 points**. Collecting all three in time earns **30 points and one win**; reaching the deadline first records **one loss**. Finishing at exactly **5.000 seconds** is a loss.
+
+The leaderboard ranks players by their **fastest winning time**, lowest first. Players without a timed win appear after players with one. Equal best times are ordered by more wins, then fewer losses, then player name. Best times are stored as integer milliseconds and displayed in seconds with three decimal places, such as **2.147 s**.
+
+The five-second limit is `roundDurationMs: 5000` in `game-rules.json`. The timer checks actual elapsed time from `performance.now()` on ticks and clicks. Switching tabs does not pause the round; the next check recognises an expired deadline. Times are measured in the player's browser; the server validates the result format but does not independently verify the clicks or timing.
 
 | Action | What happens in the app |
 | --- | --- |
 | **Create** | Add a player by entering a name. |
-| **Read** | View the player list and each player's rounds won. |
-| **Update** | Edit a player's name, or save a win after completing a round. |
+| **Read** | View the leaderboard and each player's wins, losses, and best time. |
+| **Update** | Edit a player's name, or save a round's win/loss and update their best time. |
 | **Delete** | Remove a player and that player's saved progress. |
 
 All four CRUD actions operate on the same resource: **players**.
@@ -43,10 +62,11 @@ To download the source from GitHub, select the **`pizza-collector`** branch firs
 
 1. Add a player named **Adzan**.
 2. Select that player and start a round.
-3. Collect all three pizzas. The score reaches **30**, and the player's rounds won increases by **1** after the save succeeds.
-4. Edit the player's name.
-5. Refresh the page and check that the new name and saved win remain.
-6. Add a second test player and delete that test player.
+3. Collect all three pizzas before the five-second deadline. After saving, the player gains one win and a best time.
+4. Start another round and let time run out. After saving, the player gains one loss.
+5. Add a second player and take turns trying to beat the fastest time on the leaderboard.
+6. Edit a player's name, then refresh and check that their saved wins, losses, and best time remain.
+7. Add and delete a test player to complete the CRUD workflow.
 
 ## Save later code changes to GitHub
 
@@ -74,8 +94,8 @@ Restart the app with `npm start` when you are ready to play again.
 | `index.html` | Page structure: player form, player list, game controls, and messages. |
 | `style.css` | Colours, spacing, buttons, and layouts for narrow and wider screens. |
 | `script.js` | Browser events, rendering, API calls, and the connection between players and the game. |
-| `game.js` | Game rules expressed as small JavaScript functions. |
-| `game-rules.json` | Game settings loaded as JSON. |
+| `game.js` | Game rules, elapsed-time checks, scoring, and leaderboard sorting. |
+| `game-rules.json` | JSON settings: three pizzas, ten points each, and a 5,000 ms round. |
 | `server.js` | The HTTP server, API routes, validation, and saving records. |
 | `package.json` | Commands such as `npm start`, `npm test`, and `npm run check`. |
 | `test/` | Automated checks for game rules and the player API. |
@@ -95,11 +115,13 @@ A public player record has this shape:
 {
   "id": "a-server-generated-unique-id",
   "name": "Adzan",
-  "roundsWon": 0
+  "roundsWon": 0,
+  "roundsLost": 0,
+  "bestTimeMs": null
 }
 ```
 
-The ID identifies a player even after their name changes.
+The ID identifies a player even after their name changes. `bestTimeMs` is `null` until they have a timed win; after a win it stores their fastest finish in milliseconds.
 
 ### Player API
 
@@ -110,16 +132,19 @@ Replace `:id` with an actual player ID.
 | `GET /api/players` | Read the list of players. | None. |
 | `POST /api/players` | Create a player. | `{ "name": "Adzan" }` |
 | `PATCH /api/players/:id` | Edit a player's name. | `{ "name": "Adzan M" }` |
-| `PATCH /api/players/:id` | Record one completed round. | `{ "completedRoundId": "the-rounds-unique-id" }` |
+| `PATCH /api/players/:id` | Record a timed win. | `{ "roundResult": { "id": "round-unique-id", "outcome": "won", "elapsedMs": 2147 } }` |
+| `PATCH /api/players/:id` | Record a loss at the deadline. | `{ "roundResult": { "id": "round-unique-id", "outcome": "lost", "elapsedMs": 5000 } }` |
 | `DELETE /api/players/:id` | Delete a player. | None. |
 
 `GET` returns a JSON array. Creation returns **201 Created**. A successful edit or round save returns **200 OK**. Successful deletion returns **204 No Content**, so that response has no JSON body to parse.
 
-Player names are trimmed and must contain **1–24 characters**. The server rejects duplicate names without treating uppercase and lowercase letters as different names. A PATCH body contains either `name` or `completedRoundId`, not both. A completed-round ID must contain 1–100 characters after trimming.
+Player names are trimmed and must contain **1–24 characters**. The server rejects duplicate names without treating uppercase and lowercase letters as different names. A PATCH body contains one operation: `name` or `roundResult`. With the supplied five-second limit, a winning result uses an integer `elapsedMs` from **1 to 4999**; a loss uses **5000**. A round ID must contain 1–100 characters after trimming.
+
+For older clients, `{ "completedRoundId": "round-unique-id" }` remains accepted as a separate PATCH operation. It records an **untimed win**, which does not establish or improve a best time.
 
 Invalid JSON or invalid input returns **400**; a missing player returns **404**; a duplicate name returns **409**. The API also rejects unsupported methods and oversized request bodies. It reports a storage failure instead of silently replacing unreadable player data with an empty list.
 
-The server keeps each player's **100 most recent completed-round IDs**. Retrying a round save with the same ID while it is still in that history will not count the win twice. The browser reuses the completed round's ID when retrying a failed save.
+The server keeps each player's **100 most recent round IDs**. While an ID is in that history, sending it again cannot count another result or replace its recorded outcome. The browser retries a failed save using the same round ID and result.
 
 ### A small GET example
 
@@ -161,7 +186,7 @@ async function addPlayerExample(name) {
 
 The running server saves player data in **`.data/players.json`** inside the current project environment. The file is created as needed and excluded from Git commits.
 
-Saved player names and rounds won survive a browser refresh or server restart **in the same Codespace**. An unfinished game round is browser state and is not restored after refreshing.
+Saved player names, wins, losses, and best times survive a browser refresh or server restart **in the same Codespace**. Earlier player records keep their names and wins and receive defaults of **zero losses** and **no best time**. An unfinished game round is browser state and is not restored after refreshing.
 
 GitHub commits back up the project's source code; they do **not** back up this runtime data file. Creating another Codespace starts with separate player data. Deleting the original Codespace loses its data unless you first download a copy of `.data/players.json`.
 
@@ -176,14 +201,14 @@ npm test
 
 The first checks JavaScript syntax. The second runs the automated tests with Node's built-in test runner. See `ASSESSMENT.md` for the browser checks to perform before submission.
 
-**Validation during preparation:** `npm run check` passed, and all **12 automated game and API tests** passed. Browser gameplay and mobile rendering have **not been checked manually here**; complete the browser checklist in `ASSESSMENT.md` before submission.
+**Timer-update validation:** `npm run check` passed with exit code 0. All **22 automated tests passed**: 9 game tests and 13 server tests, with **0 failures and 0 skipped**. The user reported that the earlier game worked well; the new timer, leaderboard, and mobile rendering have **not been checked manually here**. Complete the updated browser checklist in `ASSESSMENT.md` before submission.
 
 | What you see | What to check |
 | --- | --- |
 | The page cannot connect or the API fails. | Confirm that `npm start` is still running and open its forwarded port 3000. |
 | `package.json` cannot be found. | Open the terminal in the folder containing `package.json`. |
 | The port is already in use. | Stop the earlier server terminal with Ctrl+C, then start it again. |
-| A win could not be saved. | Restore the server connection and use Retry saving win. Reload players exits the current round and reads the server's latest records if the error cannot be recovered. |
+| A round result could not be saved. | Restore the server connection and use the retry action. Reload players exits the current round and reads the server's latest records if the error cannot be recovered. |
 | The page opens from a file but player actions fail. | Run the server and use its URL instead of double-clicking `index.html`. |
 | A GitHub Pages URL shows only part of the app. | GitHub Pages alone cannot run this project's Node server; use Codespaces for this setup. |
 

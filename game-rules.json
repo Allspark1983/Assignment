@@ -1,4 +1,5 @@
 {
   "pizzasPerRound": 3,
-  "pointsPerPizza": 10
+  "pointsPerPizza": 10,
+  "roundDurationMs": 5000
 }

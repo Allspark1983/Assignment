@@ -511,6 +511,15 @@ input.is-error {
   font-size: 10px;
 }
 
+.player-best {
+  display: block;
+  margin-top: 3px;
+  color: #78521e;
+  font-size: 11px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
 .player-actions {
   display: flex;
   align-items: center;
@@ -581,6 +590,18 @@ input.is-error {
   text-align: center;
 }
 
+.round-status[data-outcome="won"] {
+  border-color: #b5d2b8;
+  color: var(--green);
+  background: #edf7ee;
+}
+
+.round-status[data-outcome="lost"] {
+  border-color: #e4ac9b;
+  color: var(--tomato-dark);
+  background: var(--tomato-light);
+}
+
 .active-player {
   display: flex;
   align-items: center;
@@ -613,9 +634,149 @@ input.is-error {
   overflow-wrap: anywhere;
 }
 
+.player-record {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.7fr;
+  gap: 12px;
+  margin: 0 0 19px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.player-record > div {
+  min-width: 0;
+}
+
+.player-record dt {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.player-record dd {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 750;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-record .personal-best dd {
+  color: var(--green);
+  font-size: 20px;
+}
+
+.player-record .personal-best .no-best-time {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.round-timer {
+  margin-bottom: 14px;
+  padding: 13px 15px 12px;
+  border: 1px solid #e5d1a8;
+  border-radius: 13px;
+  background: #fff4d9;
+}
+
+.timer-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+#timer-label {
+  margin: 0;
+  color: #705226;
+  font-size: 12px;
+}
+
+.timer-value {
+  margin: 0;
+  color: #705226;
+  font-size: 33px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-unit {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+#timer-progress {
+  display: block;
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 20px;
+  appearance: none;
+  color: #b77921;
+  background: #eadfc7;
+  accent-color: #b77921;
+}
+
+#timer-progress::-webkit-progress-bar {
+  border-radius: 20px;
+  background: #eadfc7;
+}
+
+#timer-progress::-webkit-progress-value {
+  border-radius: 20px;
+  background: #b77921;
+}
+
+#timer-progress::-moz-progress-bar {
+  border-radius: 20px;
+  background: #b77921;
+}
+
+#round-instructions {
+  margin: 10px 0 0;
+  color: #78613d;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.round-timer[data-urgent="true"],
+.round-timer[data-state="lost"] {
+  border-color: #dcaa98;
+  background: var(--tomato-light);
+}
+
+.round-timer[data-urgent="true"] .timer-value,
+.round-timer[data-state="lost"] .timer-value {
+  color: var(--tomato);
+}
+
+.round-timer[data-urgent="true"] #timer-progress::-webkit-progress-value {
+  background: var(--tomato);
+}
+
+.round-timer[data-urgent="true"] #timer-progress::-moz-progress-bar {
+  background: var(--tomato);
+}
+
+.round-timer[data-state="won"] {
+  border-color: #b5d2b8;
+  background: #edf7ee;
+}
+
+.round-timer[data-state="won"] .timer-value {
+  color: var(--green);
+}
+
 .scoreboard {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin: 0 0 16px;
 }
@@ -661,6 +822,14 @@ input.is-error {
   background-color: #faf1de;
   background-image: radial-gradient(#e5d5b5 1px, transparent 1px);
   background-size: 16px 16px;
+}
+
+.game-board[data-state="won"] {
+  border-color: #b5d2b8;
+}
+
+.game-board[data-state="lost"] {
+  border-color: #d9ab99;
 }
 
 .board-placeholder {
@@ -996,6 +1165,18 @@ input.is-error {
 
   .scoreboard {
     gap: 6px;
+  }
+
+  .player-record {
+    gap: 8px;
+  }
+
+  .player-record .personal-best dd {
+    font-size: 18px;
+  }
+
+  .player-record .personal-best .no-best-time {
+    font-size: 11px;
   }
 
   .score-card {

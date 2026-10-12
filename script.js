@@ -2,8 +2,12 @@ import {
   validateRules,
   createRound,
   collectPizza,
+  updateRoundTime,
+  getRemainingTimeMs,
   getRoundScore,
-  isRoundComplete
+  isRoundComplete,
+  isRoundOver,
+  sortPlayersByBestTime
 } from './game.js';
 
 // 1. SELECT: find the HTML elements that JavaScript will work with.
@@ -20,6 +24,8 @@ const elements = {
   playerMessage: document.querySelector('#player-message'),
   activePlayerName: document.querySelector('#active-player-name'),
   winsDisplay: document.querySelector('#wins-display'),
+  lossesDisplay: document.querySelector('#losses-display'),
+  bestTimeDisplay: document.querySelector('#best-time-display'),
   scoreDisplay: document.querySelector('#score-display'),
   targetScore: document.querySelector('#target-score'),
   remainingDisplay: document.querySelector('#remaining-display'),
@@ -29,6 +35,11 @@ const elements = {
   reloadPlayers: document.querySelector('#reload-players'),
   gameMessage: document.querySelector('#game-message'),
   roundStatus: document.querySelector('#round-status'),
+  roundTimer: document.querySelector('#round-timer'),
+  timerDisplay: document.querySelector('#timer-display'),
+  timerProgress: document.querySelector('#timer-progress'),
+  roundInstructions: document.querySelector('#round-instructions'),
+  timeLimitText: document.querySelector('#time-limit-text'),
   deleteDialog: document.querySelector('#delete-dialog'),
   deletePlayerName: document.querySelector('#delete-player-name'),
   confirmDelete: document.querySelector('#confirm-delete'),
@@ -37,7 +48,7 @@ const elements = {
 
 // 2. DATA: a player is an object; players is an array of those objects.
 let players = [];
-let rules = { pizzasPerRound: 3, pointsPerPizza: 10 };
+let rules = { pizzasPerRound: 3, pointsPerPizza: 10, roundDurationMs: 5000 };
 let activePlayerId = null;
 let editingPlayerId = null;
 let deletingPlayerId = null;
@@ -46,6 +57,7 @@ let loaded = false;
 let busy = false;
 let roundSaved = false;
 let saveFailed = false;
+let roundTimerId = null;
 
 // 3. AJAX: fetch sends real HTTP requests to our Node.js server.
 async function requestJSON(url, options = {}) {
@@ -99,11 +111,32 @@ function isRoundLocked() {
   return Boolean(round && !roundSaved);
 }
 
-// Return a new array rather than changing the original order.
-function sortPlayersByWins(playerList) {
-  return [...playerList].sort((first, second) =>
-    second.roundsWon - first.roundsWon || first.name.localeCompare(second.name)
-  );
+// Convert milliseconds into a race time with three decimal places.
+function formatTime(milliseconds) {
+  return (milliseconds / 1000).toFixed(3) + ' s';
+}
+
+function isValidPlayer(player) {
+  return player && typeof player.id === 'string' &&
+    typeof player.name === 'string' && player.name.length > 0 &&
+    Number.isSafeInteger(player.roundsWon) && player.roundsWon >= 0 &&
+    Number.isSafeInteger(player.roundsLost) && player.roundsLost >= 0 &&
+    (player.bestTimeMs === null ||
+      (Number.isSafeInteger(player.bestTimeMs) && player.bestTimeMs >= 1));
+}
+
+function stopRoundTimer() {
+  if (roundTimerId !== null) {
+    clearInterval(roundTimerId);
+    roundTimerId = null;
+  }
+}
+
+function resetRound() {
+  stopRoundTimer();
+  round = null;
+  roundSaved = false;
+  saveFailed = false;
 }
 
 function makeButton(label, className, action, playerId) {
@@ -128,17 +161,21 @@ function renderPlayers(playerList) {
     ? 'No players yet. Add a name above to begin.'
     : (busy ? 'Loading your players…' : 'Your players will appear here once they load.');
 
-  playerList.forEach((player) => {
+  playerList.forEach((player, index) => {
     const row = document.createElement('li');
     row.className = 'player-row' + (player.id === activePlayerId ? ' is-selected' : '');
 
     const choose = makeButton('', 'player-choice', 'select', player.id);
     choose.setAttribute('aria-pressed', String(player.id === activePlayerId));
-    choose.setAttribute('aria-label', 'Play as ' + player.name + ', ' + player.roundsWon + ' rounds won');
+    const ranked = player.bestTimeMs !== null;
+    const ranking = ranked ? 'Rank ' + (index + 1) + '. ' : 'Unranked. ';
+    const bestTime = ranked ? 'Best time ' + formatTime(player.bestTimeMs) : 'No timed win yet';
+    choose.setAttribute('aria-label', ranking + 'Play as ' + player.name + '. ' +
+      player.roundsWon + ' wins, ' + player.roundsLost + ' losses. ' + bestTime);
 
     const avatar = document.createElement('span');
     avatar.className = 'player-avatar';
-    avatar.textContent = Array.from(player.name)[0].toUpperCase();
+    avatar.textContent = ranked ? '#' + (index + 1) : '—';
     avatar.setAttribute('aria-hidden', 'true');
 
     const copy = document.createElement('span');
@@ -148,9 +185,14 @@ function renderPlayers(playerList) {
     title.textContent = player.name;
     const details = document.createElement('span');
     details.className = 'player-meta';
-    details.textContent = player.roundsWon + (player.roundsWon === 1 ? ' round won' : ' rounds won');
+    details.textContent = player.roundsWon + (player.roundsWon === 1 ? ' win' : ' wins') +
+      ' · ' + player.roundsLost + (player.roundsLost === 1 ? ' loss' : ' losses');
     if (player.id === activePlayerId) details.textContent += ' · Selected';
+    const best = document.createElement('span');
+    best.className = 'player-best';
+    best.textContent = ranked ? 'Best ' + formatTime(player.bestTimeMs) : 'No timed win yet';
     copy.appendChild(title);
+    copy.appendChild(best);
     copy.appendChild(details);
     choose.appendChild(avatar);
     choose.appendChild(copy);
@@ -176,14 +218,40 @@ function renderPlayers(playerList) {
   elements.playerFormTitle.textContent = editingPlayerId ? 'Edit player' : 'Add a player';
 }
 
+function renderTimer(nowMs = performance.now()) {
+  const remainingMs = round
+    ? getRemainingTimeMs(round, nowMs) : rules.roundDurationMs;
+  // Round up the displayed tenth, so 0.0 only appears once time has run out.
+  const remainingText = (Math.ceil(remainingMs / 100) / 10).toFixed(1);
+  elements.timerDisplay.textContent = remainingText;
+  elements.timerProgress.max = rules.roundDurationMs;
+  elements.timerProgress.value = remainingMs;
+  elements.timerProgress.setAttribute('aria-valuetext', remainingText + ' seconds remaining');
+  elements.roundTimer.dataset.state = round ? round.status : 'ready';
+  elements.roundTimer.dataset.urgent = String(
+    Boolean(round && round.status === 'playing' && remainingMs <= 1000)
+  );
+}
+
 function renderGame() {
   const player = getActivePlayer();
   elements.activePlayerName.textContent = player ? player.name : 'Choose a player';
   elements.winsDisplay.textContent = player ? player.roundsWon : 0;
+  elements.lossesDisplay.textContent = player ? player.roundsLost : 0;
+  elements.bestTimeDisplay.textContent = player && player.bestTimeMs !== null
+    ? formatTime(player.bestTimeMs) : 'No timed win yet';
+  elements.bestTimeDisplay.classList.toggle('no-best-time', !player || player.bestTimeMs === null);
   elements.scoreDisplay.textContent = getRoundScore(round);
   elements.targetScore.textContent = rules.pizzasPerRound * rules.pointsPerPizza;
   elements.remainingDisplay.textContent = round
     ? round.remainingPizzaIds.length : rules.pizzasPerRound;
+  const seconds = rules.roundDurationMs / 1000;
+  const timeLimit = seconds + (seconds === 1 ? ' second' : ' seconds');
+  elements.roundInstructions.textContent = loaded
+    ? 'Collect ' + rules.pizzasPerRound + (rules.pizzasPerRound === 1 ? ' pizza' : ' pizzas') +
+      ' in under ' + timeLimit + '. Your fastest winning time sets your rank.'
+    : 'Loading the round settings…';
+  elements.timeLimitText.textContent = timeLimit;
 
   elements.startRound.disabled = !loaded || busy || !player || isRoundLocked() || Boolean(editingPlayerId);
   elements.startRound.textContent = roundSaved ? 'Play again' : 'Start round';
@@ -196,10 +264,13 @@ function renderGame() {
 
   if (!loaded) elements.roundStatus.textContent = 'Getting ready';
   else if (saveFailed) elements.roundStatus.textContent = 'Save needed';
-  else if (roundSaved) elements.roundStatus.textContent = 'Round complete';
-  else if (isRoundComplete(round)) elements.roundStatus.textContent = 'Saving your win';
+  else if (isRoundOver(round)) elements.roundStatus.textContent =
+    isRoundComplete(round) ? 'You win!' : "Time's up!";
   else if (round) elements.roundStatus.textContent = 'Round in progress';
   else elements.roundStatus.textContent = 'Ready when you are';
+  elements.roundStatus.dataset.outcome = round ? round.status : 'ready';
+  elements.gameBoard.dataset.state = round ? round.status : 'ready';
+  renderTimer();
 
   elements.gameBoard.replaceChildren();
   for (let id = 1; id <= rules.pizzasPerRound; id += 1) {
@@ -208,8 +279,10 @@ function renderGame() {
     pizza.type = 'button';
     pizza.className = 'pizza-button' + (collected ? ' is-collected' : '');
     pizza.dataset.pizzaId = id;
-    pizza.disabled = !round || collected || busy || isRoundComplete(round);
-    pizza.setAttribute('aria-label', collected ? 'Pizza ' + id + ' collected' : 'Collect pizza ' + id);
+    pizza.disabled = !round || collected || busy || isRoundOver(round);
+    const expired = Boolean(round && round.status === 'lost' && !collected);
+    pizza.setAttribute('aria-label', collected ? 'Pizza ' + id + ' collected' :
+      (expired ? 'Pizza ' + id + ', time ran out' : 'Collect pizza ' + id));
 
     const art = document.createElement('span');
     art.className = 'pizza-art';
@@ -217,7 +290,7 @@ function renderGame() {
     art.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span');
     label.className = 'pizza-label';
-    label.textContent = collected ? 'Collected' : 'Pizza ' + id;
+    label.textContent = collected ? 'Collected' : (expired ? 'Time ran out' : 'Pizza ' + id);
     pizza.appendChild(art);
     pizza.appendChild(label);
     elements.gameBoard.appendChild(pizza);
@@ -227,7 +300,7 @@ function renderGame() {
 function refreshInterface() {
   // Structured programming: one function's returned value is passed
   // directly as the argument of another function.
-  renderPlayers(sortPlayersByWins(players));
+  renderPlayers(sortPlayersByBestTime(players));
   renderGame();
 }
 
@@ -248,6 +321,7 @@ async function handlePlayerSubmit(event) {
     elements.playerName.focus();
     return;
   }
+  elements.playerName.removeAttribute('aria-invalid');
 
   const wasEditing = Boolean(editingPlayerId);
   busy = true;
@@ -258,23 +332,22 @@ async function handlePlayerSubmit(event) {
       wasEditing ? '/api/players/' + encodeURIComponent(editingPlayerId) : '/api/players',
       { method: wasEditing ? 'PATCH' : 'POST', body: { name: name } }
     );
+    if (!isValidPlayer(player)) throw new Error('The saved player could not be read.');
 
     if (wasEditing) {
       players = players.map((item) => item.id === player.id ? player : item);
     } else {
       players.push(player);
       activePlayerId = player.id;
-      round = null;
-      roundSaved = false;
-      saveFailed = false;
+      resetRound();
     }
     resetEditor();
     setMessage(elements.playerMessage, wasEditing ? 'Player name updated.' : player.name + ' is ready to play.', 'success');
-    if (!wasEditing) setMessage(elements.gameMessage, 'Press Start round to collect your pizzas.');
+    if (!wasEditing) setMessage(elements.gameMessage, 'Ready? Press Start round when you want the timer to begin.');
     setConnection('Progress saved');
   } catch (error) {
     setMessage(elements.playerMessage, error.message, 'error');
-    setConnection('Change not saved', 'error');
+    setConnection('Change not confirmed', 'error');
   } finally {
     busy = false;
     refreshInterface();
@@ -290,11 +363,9 @@ function handlePlayerAction(event) {
 
   if (button.dataset.action === 'select') {
     activePlayerId = player.id;
-    round = null;
-    roundSaved = false;
-    saveFailed = false;
+    resetRound();
     resetEditor();
-    setMessage(elements.gameMessage, 'Press Start round to collect your pizzas.');
+    setMessage(elements.gameMessage, 'Ready? Press Start round when you want the timer to begin.');
     setMessage(elements.playerMessage, player.name + ' selected.');
     refreshInterface();
     elements.startRound.focus();
@@ -327,9 +398,7 @@ async function deletePlayer(event) {
     players = players.filter((player) => player.id !== id);
     if (activePlayerId === id) {
       activePlayerId = players[0]?.id || null;
-      round = null;
-      roundSaved = false;
-      saveFailed = false;
+      resetRound();
       setMessage(elements.gameMessage, activePlayerId ? 'Press Start round to play.' : 'Add a player to begin.');
     }
     if (editingPlayerId === id) resetEditor();
@@ -337,7 +406,7 @@ async function deletePlayer(event) {
     setConnection('Progress saved');
   } catch (error) {
     setMessage(elements.playerMessage, error.message, 'error');
-    setConnection('Delete not saved', 'error');
+    setConnection('Delete not confirmed', 'error');
   } finally {
     busy = false;
     deletingPlayerId = null;
@@ -347,57 +416,106 @@ async function deletePlayer(event) {
   }
 }
 
+// 7. TIMER: use the actual deadline, even if a background tab slows the ticks.
+function checkRoundDeadline() {
+  if (!round || isRoundOver(round)) {
+    stopRoundTimer();
+    return;
+  }
+
+  const nowMs = performance.now();
+  round = updateRoundTime(round, nowMs);
+  // A normal tick only updates the timer. It does not recreate any buttons.
+  renderTimer(nowMs);
+  if (isRoundOver(round)) {
+    stopRoundTimer();
+    void saveFinishedRound();
+  }
+}
+
 function startRound() {
   if (!loaded || busy || !getActivePlayer() || isRoundLocked() || editingPlayerId) return;
-  round = createRound(activePlayerId, rules, crypto.randomUUID());
+  stopRoundTimer();
+  round = createRound(activePlayerId, rules, crypto.randomUUID(), performance.now());
   roundSaved = false;
   saveFailed = false;
-  setMessage(elements.gameMessage, 'Collect all ' + rules.pizzasPerRound + ' pizzas. Each is worth ' + rules.pointsPerPizza + ' points.');
+  const seconds = rules.roundDurationMs / 1000;
+  setMessage(elements.gameMessage, 'Go! You have ' + seconds + (seconds === 1 ? ' second' : ' seconds') +
+    ' to collect ' + rules.pizzasPerRound + (rules.pizzasPerRound === 1 ? ' pizza' : ' pizzas') +
+    '. Each is worth ' + rules.pointsPerPizza + (rules.pointsPerPizza === 1 ? ' point.' : ' points.'));
   setMessage(elements.playerMessage, 'Finish this round to change players.');
   refreshInterface();
-  elements.gameBoard.querySelector('button:not(:disabled)').focus();
+  roundTimerId = setInterval(checkRoundDeadline, 50);
+  elements.gameBoard.querySelector('button:not(:disabled)')?.focus();
 }
 
 async function collectPizzaFromBoard(event) {
   const button = event.target.closest('button[data-pizza-id]');
-  if (!button || !elements.gameBoard.contains(button) || !round || busy || isRoundComplete(round)) return;
-  const updatedRound = collectPizza(round, Number(button.dataset.pizzaId));
+  if (!button || !elements.gameBoard.contains(button) || !round || busy || isRoundOver(round)) return;
+  const nowMs = performance.now();
+  // Recheck the deadline on the click itself, not only on the last timer tick.
+  round = updateRoundTime(round, nowMs);
+  if (isRoundOver(round)) {
+    stopRoundTimer();
+    await saveFinishedRound();
+    return;
+  }
+  const updatedRound = collectPizza(round, Number(button.dataset.pizzaId), nowMs);
   if (updatedRound === round) return;
   round = updatedRound;
-  renderGame();
 
-  if (isRoundComplete(round)) {
-    await saveCompletedRound();
+  if (isRoundOver(round)) {
+    stopRoundTimer();
+    await saveFinishedRound();
   } else {
-    setMessage(elements.gameMessage, getRoundScore(round) + ' points! ' + round.remainingPizzaIds.length + ' pizzas left.');
-    elements.gameBoard.querySelector('button:not(:disabled)').focus();
+    renderGame();
+    setMessage(elements.gameMessage, getRoundScore(round) + ' points! ' + round.remainingPizzaIds.length +
+      (round.remainingPizzaIds.length === 1 ? ' pizza left.' : ' pizzas left.'));
+    elements.gameBoard.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
   }
 }
 
-async function saveCompletedRound() {
-  if (!isRoundComplete(round) || busy || roundSaved) return;
+async function saveFinishedRound() {
+  if (!isRoundOver(round) || busy || roundSaved) return;
+  stopRoundTimer();
+  const finishedRound = round;
+  const won = isRoundComplete(finishedRound);
+  const collectedCount = finishedRound.pizzasPerRound - finishedRound.remainingPizzaIds.length;
+  const resultText = won
+    ? 'You win! ' + getRoundScore(finishedRound) + ' points in ' + formatTime(finishedRound.elapsedMs) + '.'
+    : "Time's up! You collected " + collectedCount + ' of ' + finishedRound.pizzasPerRound + ' pizzas.';
   busy = true;
   saveFailed = false;
-  setConnection('Saving your win…', 'loading');
-  setMessage(elements.gameMessage, 'All pizzas collected! Saving your win…');
+  setConnection('Saving your result…', 'loading');
+  setMessage(elements.gameMessage, resultText + ' Saving your result…', won ? 'success' : 'error');
   refreshInterface();
 
   try {
-    // The same round ID is reused on retry, protecting against a double win
-    // if the server saved the first request but its response was interrupted.
-    const player = await requestJSON('/api/players/' + encodeURIComponent(round.playerId), {
+    // Retry sends the same result ID, so an interrupted response cannot
+    // turn a single round into two recorded wins or losses.
+    const player = await requestJSON('/api/players/' + encodeURIComponent(finishedRound.playerId), {
       method: 'PATCH',
-      body: { completedRoundId: round.id }
+      body: {
+        roundResult: {
+          id: finishedRound.id,
+          outcome: finishedRound.status,
+          elapsedMs: finishedRound.elapsedMs
+        }
+      }
     });
+    if (!isValidPlayer(player)) throw new Error('The updated player could not be read.');
     players = players.map((item) => item.id === player.id ? player : item);
     roundSaved = true;
-    setMessage(elements.gameMessage, 'You win! ' + getRoundScore(round) + ' points. Your completed round is saved.', 'success');
+    setMessage(elements.gameMessage, resultText + (won
+      ? ' Your win is saved. Challenge the next player!'
+      : ' This loss is saved. Try again or let the next player have a turn.'), won ? 'success' : 'error');
     setMessage(elements.playerMessage, 'Play again or choose another player.');
     setConnection('Progress saved');
   } catch (error) {
     saveFailed = true;
-    setMessage(elements.gameMessage, 'Round complete, but your win was not confirmed. ' + error.message + ' Retry saving, or reload players to leave this round.', 'error');
-    setConnection('Win not confirmed', 'error');
+    setMessage(elements.gameMessage, resultText + ' Your result has not been confirmed. ' +
+      error.message + ' Retry saving, or reload players to leave this round and read the saved totals.', 'error');
+    setConnection('Result not confirmed', 'error');
   } finally {
     busy = false;
     refreshInterface();
@@ -405,17 +523,16 @@ async function saveCompletedRound() {
   }
 }
 
-// 7. EVENTS: submit and click are different kinds of event handler.
+// 8. EVENTS: submit and click are different kinds of event handler.
 elements.playerForm.addEventListener('submit', handlePlayerSubmit);
 elements.playerList.addEventListener('click', handlePlayerAction);
 elements.startRound.addEventListener('click', startRound);
 elements.gameBoard.addEventListener('click', collectPizzaFromBoard);
-elements.retrySave.addEventListener('click', saveCompletedRound);
+elements.retrySave.addEventListener('click', saveFinishedRound);
+document.addEventListener('visibilitychange', checkRoundDeadline);
 elements.reloadPlayers.addEventListener('click', async () => {
   if (busy) return;
-  round = null;
-  roundSaved = false;
-  saveFailed = false;
+  resetRound();
   loaded = false;
   resetEditor();
   setMessage(elements.playerMessage, '');
@@ -437,8 +554,9 @@ elements.cancelEdit.addEventListener('click', () => {
   elements.playerName.focus();
 });
 
-// 8. STARTUP: both the JSON file and player API are loaded asynchronously.
+// 9. STARTUP: both the JSON file and player API are loaded asynchronously.
 async function initialiseApp() {
+  stopRoundTimer();
   busy = true;
   setConnection('Loading players…', 'loading');
   refreshInterface();
@@ -448,14 +566,11 @@ async function initialiseApp() {
       requestJSON('/api/players')
     ]);
     rules = validateRules(settings);
-    if (!Array.isArray(savedPlayers) || !savedPlayers.every((player) =>
-      player && typeof player.id === 'string' && typeof player.name === 'string' &&
-      player.name.length > 0 && Number.isSafeInteger(player.roundsWon) && player.roundsWon >= 0
-    )) {
+    if (!Array.isArray(savedPlayers) || !savedPlayers.every(isValidPlayer)) {
       throw new Error('The saved players could not be read.');
     }
     players = savedPlayers;
-    activePlayerId = players[0]?.id || null;
+    activePlayerId = sortPlayersByBestTime(players)[0]?.id || null;
     loaded = true;
     setConnection('Progress saved');
     setMessage(elements.gameMessage, players.length ? 'Choose your player, then start a round.' : 'Add a player to begin.');

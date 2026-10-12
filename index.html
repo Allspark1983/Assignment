@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A small pizza collecting game for friends and family. Create a player, collect every slice, and keep track of your wins."
+      content="Race the clock in a pizza collecting game for friends and family. Create a player, record wins and losses, and compete for the fastest finish."
     />
     <meta name="theme-color" content="#fcf7ed" />
     <title>Pizza Collector · Four Pizza</title>
@@ -38,19 +38,19 @@
         <p class="eyebrow">Everyone gets a turn</p>
         <h1 id="page-title">Pizza Collector<span aria-hidden="true">.</span></h1>
         <p class="intro-copy">
-          Choose a player and collect every slice to win a round.
+          Beat the clock, chase your best time, and take turns with friends.
         </p>
       </section>
 
       <div class="game-layout">
         <section class="panel players-panel" aria-labelledby="players-title">
           <div class="section-heading">
-            <h2 id="players-title">Your players</h2>
+            <h2 id="players-title">Leaderboard</h2>
             <span class="count-badge" aria-label="Total players">
               <span id="player-count">0</span>
             </span>
           </div>
-          <p class="section-copy">Keep everyone's wins in one place.</p>
+          <p class="section-copy">Your fastest winning time sets your rank.</p>
 
           <form id="player-form" class="player-form">
             <h3 id="player-form-title">Add a player</h3>
@@ -85,8 +85,8 @@
           <p id="player-message" class="message" role="status" aria-live="polite"></p>
 
           <div class="player-list-section">
-            <p class="list-label">Choose who's playing</p>
-            <ul id="player-list" class="player-list" aria-label="Players"></ul>
+            <p class="list-label">Fastest first · Choose a player</p>
+            <ul id="player-list" class="player-list" aria-label="Player leaderboard, fastest winning times first"></ul>
             <p id="players-empty" class="empty-message">Loading your players…</p>
           </div>
         </section>
@@ -95,7 +95,7 @@
           <div class="game-heading">
             <div>
               <p class="eyebrow">At the pizza table</p>
-              <h2 id="game-title">Collect them all</h2>
+              <h2 id="game-title">Race the clock</h2>
             </div>
             <span id="round-status" class="round-status">Ready when you are</span>
           </div>
@@ -106,6 +106,33 @@
               <p class="active-player-label">Playing as</p>
               <p id="active-player-name">Choose a player</p>
             </div>
+          </div>
+
+          <dl class="player-record" aria-label="Selected player's record">
+            <div>
+              <dt>Wins</dt>
+              <dd id="wins-display">0</dd>
+            </div>
+            <div>
+              <dt>Losses</dt>
+              <dd id="losses-display">0</dd>
+            </div>
+            <div class="personal-best">
+              <dt>Personal best</dt>
+              <dd id="best-time-display" class="no-best-time">No timed win yet</dd>
+            </div>
+          </dl>
+
+          <div id="round-timer" class="round-timer" data-state="ready" aria-live="off">
+            <div class="timer-heading">
+              <label id="timer-label" for="timer-progress">Time left</label>
+              <p class="timer-value">
+                <span id="timer-display" role="timer" aria-live="off" aria-label="Seconds remaining">5.0</span>
+                <span class="timer-unit">s</span>
+              </p>
+            </div>
+            <progress id="timer-progress" max="5000" value="5000" aria-labelledby="timer-label"></progress>
+            <p id="round-instructions">Loading the round settings…</p>
           </div>
 
           <dl class="scoreboard">
@@ -120,13 +147,9 @@
               <dt>Slices left</dt>
               <dd id="remaining-display">0</dd>
             </div>
-            <div class="score-card">
-              <dt>Rounds won</dt>
-              <dd id="wins-display">0</dd>
-            </div>
           </dl>
 
-          <div id="game-board" class="game-board" role="group" aria-label="Pizza playing field">
+          <div id="game-board" class="game-board" role="group" aria-label="Pizza playing field" aria-describedby="round-instructions">
             <div class="board-placeholder">
               <span class="board-placeholder-icon" aria-hidden="true">🍕</span>
               <p>Your pizza table is waiting.</p>
@@ -144,7 +167,7 @@
               type="button"
               hidden
             >
-              Retry saving win
+              Retry saving result
             </button>
             <button
               id="reload-players"
@@ -165,8 +188,8 @@
         <h2 id="how-to-title">How to play</h2>
         <ol>
           <li><span>1</span><p>Add your name and choose your player.</p></li>
-          <li><span>2</span><p>Start a round and tap every pizza slice.</p></li>
-          <li><span>3</span><p>Collect them all to add a win. Take turns!</p></li>
+          <li><span>2</span><p>Start the timer. You have <span id="time-limit-text">5 seconds</span> to collect every slice.</p></li>
+          <li><span>3</span><p>Beat your best time, then let the next player try.</p></li>
         </ol>
         <p class="keyboard-help">Using a keyboard? Tab to a slice, then press Enter or Space.</p>
       </section>
@@ -185,7 +208,7 @@
       <p class="eyebrow">Player settings</p>
       <h2 id="delete-dialog-title">Delete this player?</h2>
       <p id="delete-dialog-description">
-        This will remove <strong id="delete-player-name"></strong> and their recorded wins.
+        This will remove <strong id="delete-player-name"></strong> and their wins, losses, and best time.
         This cannot be undone.
       </p>
       <div class="dialog-actions">
