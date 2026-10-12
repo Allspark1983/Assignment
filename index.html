@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A small pizza collecting game for friends and family. Create a player, collect every slice, and keep track of your wins."
+    />
+    <meta name="theme-color" content="#fcf7ed" />
+    <title>Pizza Collector · Four Pizza</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="script.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to the game</a>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">🍕</span>
+          <p class="brand-name">Four Pizza <span>The little arcade</span></p>
+        </div>
+        <p id="connection-status" role="status" aria-live="polite">
+          Loading players…
+        </p>
+      </div>
+    </header>
+
+    <main id="main-content" class="page-shell">
+      <noscript>
+        <p class="noscript-message">
+          This game needs JavaScript. Turn it on in your browser, then reload.
+        </p>
+      </noscript>
+
+      <section class="page-intro" aria-labelledby="page-title">
+        <p class="eyebrow">Everyone gets a turn</p>
+        <h1 id="page-title">Pizza Collector<span aria-hidden="true">.</span></h1>
+        <p class="intro-copy">
+          Choose a player and collect every slice to win a round.
+        </p>
+      </section>
+
+      <div class="game-layout">
+        <section class="panel players-panel" aria-labelledby="players-title">
+          <div class="section-heading">
+            <h2 id="players-title">Your players</h2>
+            <span class="count-badge" aria-label="Total players">
+              <span id="player-count">0</span>
+            </span>
+          </div>
+          <p class="section-copy">Keep everyone's wins in one place.</p>
+
+          <form id="player-form" class="player-form">
+            <h3 id="player-form-title">Add a player</h3>
+            <label for="player-name">Player name</label>
+            <input
+              id="player-name"
+              name="playerName"
+              type="text"
+              placeholder="Enter a name"
+              required
+              minlength="1"
+              maxlength="24"
+              autocomplete="nickname"
+              aria-describedby="player-name-help player-message"
+            />
+            <p id="player-name-help" class="field-help">Up to 24 characters.</p>
+            <div class="form-actions">
+              <button id="player-submit" class="button button-primary" type="submit">
+                Add player
+              </button>
+              <button
+                id="cancel-edit"
+                class="button button-secondary"
+                type="button"
+                hidden
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+
+          <p id="player-message" class="message" role="status" aria-live="polite"></p>
+
+          <div class="player-list-section">
+            <p class="list-label">Choose who's playing</p>
+            <ul id="player-list" class="player-list" aria-label="Players"></ul>
+            <p id="players-empty" class="empty-message">Loading your players…</p>
+          </div>
+        </section>
+
+        <section class="panel game-panel" aria-labelledby="game-title">
+          <div class="game-heading">
+            <div>
+              <p class="eyebrow">At the pizza table</p>
+              <h2 id="game-title">Collect them all</h2>
+            </div>
+            <span id="round-status" class="round-status">Ready when you are</span>
+          </div>
+
+          <div class="active-player">
+            <span class="active-player-icon" aria-hidden="true">★</span>
+            <div>
+              <p class="active-player-label">Playing as</p>
+              <p id="active-player-name">Choose a player</p>
+            </div>
+          </div>
+
+          <dl class="scoreboard">
+            <div class="score-card">
+              <dt>Score</dt>
+              <dd>
+                <span id="score-display">0</span>
+                <span class="score-divider">/ <span id="target-score">0</span></span>
+              </dd>
+            </div>
+            <div class="score-card">
+              <dt>Slices left</dt>
+              <dd id="remaining-display">0</dd>
+            </div>
+            <div class="score-card">
+              <dt>Rounds won</dt>
+              <dd id="wins-display">0</dd>
+            </div>
+          </dl>
+
+          <div id="game-board" class="game-board" role="group" aria-label="Pizza playing field">
+            <div class="board-placeholder">
+              <span class="board-placeholder-icon" aria-hidden="true">🍕</span>
+              <p>Your pizza table is waiting.</p>
+              <span>Add or choose a player to get started.</span>
+            </div>
+          </div>
+
+          <div class="game-actions">
+            <button id="start-round" class="button button-primary" type="button" disabled>
+              Start round
+            </button>
+            <button
+              id="retry-save"
+              class="button button-secondary"
+              type="button"
+              hidden
+            >
+              Retry saving win
+            </button>
+            <button
+              id="reload-players"
+              class="button button-secondary"
+              type="button"
+              hidden
+            >
+              Reload players
+            </button>
+          </div>
+          <p id="game-message" class="message" role="status" aria-live="polite">
+            Add or choose a player, then start a round.
+          </p>
+        </section>
+      </div>
+
+      <section class="how-to" aria-labelledby="how-to-title">
+        <h2 id="how-to-title">How to play</h2>
+        <ol>
+          <li><span>1</span><p>Add your name and choose your player.</p></li>
+          <li><span>2</span><p>Start a round and tap every pizza slice.</p></li>
+          <li><span>3</span><p>Collect them all to add a win. Take turns!</p></li>
+        </ol>
+        <p class="keyboard-help">Using a keyboard? Tab to a slice, then press Enter or Space.</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Four Pizza <span aria-hidden="true">·</span> A little friendly competition.</p>
+    </footer>
+
+    <dialog
+      id="delete-dialog"
+      class="delete-dialog"
+      aria-labelledby="delete-dialog-title"
+      aria-describedby="delete-dialog-description"
+    >
+      <p class="eyebrow">Player settings</p>
+      <h2 id="delete-dialog-title">Delete this player?</h2>
+      <p id="delete-dialog-description">
+        This will remove <strong id="delete-player-name"></strong> and their recorded wins.
+        This cannot be undone.
+      </p>
+      <div class="dialog-actions">
+        <button id="cancel-delete" class="button button-secondary" type="button" autofocus>
+          Keep player
+        </button>
+        <button id="confirm-delete" class="button button-danger" type="button">
+          Delete player
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

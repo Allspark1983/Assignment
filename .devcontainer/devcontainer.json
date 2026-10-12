@@ -1,0 +1,11 @@
+{
+  "name": "Pizza Collector",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22-bookworm",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Pizza Collector",
+      "onAutoForward": "notify"
+    }
+  }
+}
